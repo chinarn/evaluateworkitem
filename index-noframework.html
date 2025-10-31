@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>External Work Evaluator – Vanilla (Tokyo)</title>
+  <style>
+    :root { --bg:#0b0d10; --card:#11151a; --muted:#9aa4b2; --text:#e6edf3; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; }
+    .container { max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+    .card { background: var(--card); border: 1px solid #1f2630; border-radius: 16px; box-shadow: 0 10px 20px rgba(0,0,0,.35); }
+    .header { padding: 20px 20px 0 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+    .title { font-weight: 700; font-size: 20px; letter-spacing: .2px; }
+    .content { padding: 20px; }
+    .grid { display:grid; gap:16px; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .grid-3 { grid-template-columns: 1fr; }
+    @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } .grid-3 { grid-template-columns: 1fr 2fr 2fr; } }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    input, select, textarea, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #263041; background: #0e1217; color: var(--text); padding: 10px 12px; }
+    textarea { resize: vertical; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: #0a0d11; }
+    button { background: #1a2330; cursor: pointer; }
+    button:hover { background:#1e2a3a; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .row > * { flex: 1; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .badge { display:inline-flex; align-items:center; gap:8px; border:1px solid #2a3446; padding:8px 10px; border-radius: 999px; background:#0e1217; font-size: 12px; }
+    .nowrap { white-space: nowrap; }
+    .err { color:#ff9a9a; white-space: pre-wrap; }
+    .ok { color:#9effb3; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <div class="title">External Work Evaluator (Implicit – Tokyo)</div>
+        <div class="row" style="max-width:520px">
+          <button id="signinBtn" class="nowrap">Sign in with Genesys Cloud</button>
+          <button id="signoutBtn" class="nowrap" style="display:none">Sign out</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="grid grid-3">
+          <div>
+            <label for="region">Region (host)</label>
+            <input id="region" value="mypurecloud.jp" />
+            <div class="muted">Tokyo: <code>mypurecloud.jp</code></div>
+          </div>
+          <div class="grid-2" style="grid-column: span 2">
+            <div>
+              <label for="token">OAuth Access Token</label>
+              <input id="token" readonly placeholder="Sign in to populate automatically" />
+              <div class="muted">Redirect URI: <code>https://chinarn.github.io/evaluateworkitem/</code></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="loadQueuesBtn" disabled>Load Queues</button>
+          <div class="muted" id="queueCount"></div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:16px">
+          <div>
+            <label>1) Select a Queue</label>
+            <select id="queueSelect" disabled>
+              <option value="" disabled selected>Sign in first</option>
+            </select>
+          </div>
+          <div>
+            <label>2) Select a Member (Agent)</label>
+            <select id="memberSelect" disabled>
+              <option value="" disabled selected>Select a queue first</option>
+            </select>
+            <div class="muted" id="noMembers" style="display:none">This queue appears to have no members.</div>
+          </div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:16px">
+          <div>
+            <label for="fromname">3) From Name (optional)</label>
+            <input id="fromname" value="External Work" />
+            <div class="muted">Shown as the email remote name; searchable in Interactions.</div>
+          </div>
+          <div>
+            <label for="extref">External Reference (ID or URL)</label>
+            <input id="extref" placeholder="e.g., https://ticketing.example.com/TKT-123" />
+            <div class="muted">Links will be clickable in the Interactions UI.</div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px">
+          <label for="attrs">Custom Attributes (JSON)</label>
+          <textarea id="attrs">{ "External Reference": "" }</textarea>
+          <div class="muted">Sent as the <code>attributes</code> object when creating the email. The External Reference key will be added/overridden.</div>
+        </div>
+
+        <div class="row" style="margin-top:16px">
+          <button id="createBtn" disabled>Create & Assign External Work</button>
+          <div class="muted">Creates, assigns, then disconnects the interaction.</div>
+        </div>
+
+        <div style="margin-top:16px">
+          <label>Run Log</label>
+          <textarea id="log" rows="10" readonly></textarea>
+        </div>
+
+        <div style="margin-top:16px">
+          <div><strong>Debug</strong></div>
+          <div id="debug" class="muted"></div>
+          <div id="errors" class="err"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ======== CONFIG (TOKYO) ========
+    var REGION_HOST = "mypurecloud.jp";
+    var CLIENT_ID   = "REPLACE_WITH_YOUR_CLIENT_ID"; // <-- set this to your OAuth client id
+    var REDIRECT_URI = "https://chinarn.github.io/evaluateworkitem/";
+    var OAUTH_STATE  = "extwork_tokyo";
+    // =================================
+
+    var $ = function(id){ return document.getElementById(id); };
+    var token = "";
+    var expiresIn = null;
+    var baseUrl = function(){ return "https://api." + $("region").value; };
+
+    function log(line) {
+      var stamp = new Date().toLocaleTimeString();
+      var t = $("log");
+      t.value = (t.value ? t.value + "\\n" : "") + stamp + " • " + line;
+      t.scrollTop = t.scrollHeight;
+    }
+    function setError(msg) {
+      $("errors").textContent = msg;
+    }
+    function clearError() {
+      $("errors").textContent = "";
+    }
+
+    function buildAuthUrl() {
+      var base = "https://login." + REGION_HOST + "/oauth/authorize";
+      var params = new URLSearchParams({
+        client_id: CLIENT_ID,
+        response_type: "token",
+        redirect_uri: REDIRECT_URI,
+        state: OAUTH_STATE
+      });
+      return base + "?" + params.toString();
+    }
+
+    function readTokenFromHash() {
+      if (!location.hash) return null;
+      var p = new URLSearchParams(location.hash.substring(1));
+      var t = p.get("access_token");
+      var exp = p.get("expires_in");
+      if (t) history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      return t ? { access_token: t, expires_in: exp ? parseInt(exp, 10) : null } : null;
+    }
+
+    function updateSigninState() {
+      var signedIn = !!token;
+      $("signinBtn").style.display = signedIn ? "none" : "inline-block";
+      $("signoutBtn").style.display = signedIn ? "inline-block" : "none";
+      $("loadQueuesBtn").disabled = !signedIn;
+      $("queueSelect").disabled = !signedIn;
+      $("createBtn").disabled = !signedIn || !$("queueSelect").value || !$("memberSelect").value;
+      $("token").value = token;
+      $("queueCount").textContent = "";
+    }
+
+    $("signinBtn").addEventListener("click", function() {
+      if (CLIENT_ID === "REPLACE_WITH_YOUR_CLIENT_ID") { alert("Set CLIENT_ID in the file first."); return; }
+      if (!location.href.startsWith(REDIRECT_URI)) { location.href = REDIRECT_URI; return; }
+      location.href = buildAuthUrl();
+    });
+    $("signoutBtn").addEventListener("click", function() {
+      token = ""; expiresIn = null;
+      $("memberSelect").innerHTML = '<option value="" disabled selected>Select a queue first</option>';
+      $("queueSelect").innerHTML = '<option value="" disabled selected>Sign in first</option>';
+      $("noMembers").style.display = "none";
+      updateSigninState();
+      $("log").value = "";
+    });
+
+    window.addEventListener("error", function(e){ setError((e && e.message) ? e.message : "Script error"); });
+    window.addEventListener("unhandledrejection", function(e){ setError("Promise rejection: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
+
+    // Initialize from hash (after redirect)
+    (function init() {
+      var th = readTokenFromHash();
+      if (th) {
+        token = th.access_token; expiresIn = th.expires_in;
+        updateSigninState();
+      } else {
+        updateSigninState();
+      }
+      $("region").addEventListener("input", function(){ /* changes baseUrl on the fly */ });
+      $("queueSelect").addEventListener("change", function(){ loadMembers(this.value); updateSigninState(); });
+      $("memberSelect").addEventListener("change", function(){ updateSigninState(); });
+      $("loadQueuesBtn").addEventListener("click", function(){ loadQueues(); });
+      $("createBtn").addEventListener("click", function(){ createExternalWork(); });
+    })();
+
+    async function api(path, init) {
+      if (!token) throw new Error("Missing OAuth token");
+      var res = await fetch(baseUrl() + path, Object.assign({}, init || {}, {
+        headers: Object.assign({ "Authorization": "Bearer " + token, "Content-Type": "application/json" }, (init && init.headers) ? init.headers : {})
+      }));
+      if (!res.ok) {
+        var text = await res.text();
+        throw new Error(res.status + " " + res.statusText + ": " + text);
+      }
+      return res.json();
+    }
+
+    async function loadQueues() {
+      clearError();
+      $("queueSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
+      $("memberSelect").innerHTML = '<option value="" disabled selected>Select a queue first</option>';
+      $("noMembers").style.display = "none";
+      try {
+        var items = []; var page = 1; var pageSize = 100; var data;
+        do {
+          data = await api("/api/v2/routing/queues?pageSize=" + pageSize + "&pageNumber=" + page);
+          if (data && Array.isArray(data.entities)) {
+            for (var i=0;i<data.entities.length;i++){ var q=data.entities[i]; items.push({ id:q.id, name:q.name }); }
+          }
+          page++;
+        } while (data && data.pageCount && page <= data.pageCount);
+        items.sort(function(a,b){ return a.name.localeCompare(b.name); });
+        var opts = ['<option value="" disabled selected>Choose a queue</option>'];
+        for (var j=0;j<items.length;j++){ opts.push('<option value="'+items[j].id+'">'+items[j].name+'</option>'); }
+        $("queueSelect").innerHTML = opts.join("");
+        $("queueCount").textContent = items.length ? (items.length + " queues loaded") : "No queues";
+        log("Loaded " + items.length + " queues");
+      } catch (e) {
+        setError(e.message || String(e));
+        log("Failed to load queues: " + (e.message || String(e)));
+        $("queueSelect").innerHTML = '<option value="" disabled selected>Error loading queues</option>';
+      }
+    }
+
+    async function loadMembers(queueId) {
+      clearError();
+      $("memberSelect").innerHTML = '<option value="" disabled selected>Loading members…</option>';
+      $("noMembers").style.display = "none";
+      try {
+        var out = []; var page = 1; var pageSize = 100; var data;
+        do {
+          data = await api("/api/v2/routing/queues/" + queueId + "/members?pageSize=" + pageSize + "&pageNumber=" + page);
+          if (data && Array.isArray(data.entities)) {
+            for (var i=0;i<data.entities.length;i++){
+              var m=data.entities[i];
+              var name = (m && m.name) || (m && m.user && m.user.name) || "(unknown)";
+              var email = m && m.user && m.user.email;
+              var id = (m && m.user && m.user.id) || (m && m.id);
+              if (id) out.push({ id:id, name:name, email:email });
+            }
+          }
+          page++;
+        } while (data && data.pageCount && page <= data.pageCount);
+        out.sort(function(a,b){ return a.name.localeCompare(b.name); });
+        if (!out.length) {
+          $("memberSelect").innerHTML = '<option value="" disabled selected>No members</option>';
+          $("noMembers").style.display = "block";
+        } else {
+          var opts = ['<option value="" disabled selected>Choose a member</option>'];
+          for (var j=0;j<out.length;j++){
+            var label = out[j].name + (out[j].email ? (" (" + out[j].email + ")") : "");
+            opts.push('<option value="'+out[j].id+'">'+label+'</option>');
+          }
+          $("memberSelect").innerHTML = opts.join("");
+          $("noMembers").style.display = "none";
+        }
+        log("Loaded " + out.length + " members for queue");
+        updateSigninState();
+      } catch (e) {
+        setError(e.message || String(e));
+        log("Failed to load members: " + (e.message || String(e)));
+        $("memberSelect").innerHTML = '<option value="" disabled selected>Error loading members</option>';
+      }
+    }
+
+    async function createExternalWork() {
+      clearError();
+      var queueId = $("queueSelect").value;
+      var userId  = $("memberSelect").value;
+      if (!queueId) { log("Please select a queue"); return; }
+      if (!userId)  { log("Please select a member (agent)"); return; }
+
+      $("createBtn").disabled = true;
+      log("Creating proxy email interaction...");
+      try {
+        var fromName = $("fromname").value || "External Work";
+        var externalRef = $("extref").value || "";
+        var attributes = {};
+        try { attributes = JSON.parse($("attrs").value || "{}"); } catch(_) { log("Attributes JSON is invalid; using {}"); attributes = {}; }
+        if (externalRef) attributes["External Reference"] = externalRef;
+
+        var createBody = {
+          queueId: queueId,
+          provider: "QualityForm",
+          priority: 0,
+          direction: "INBOUND",
+          fromName: fromName,
+          attributes: attributes
+        };
+
+        var created = await api("/api/v2/conversations/emails", { method: "POST", body: JSON.stringify(createBody) });
+        var conversationId = (created && created.id) || (created && created.conversationId) || (created && created.conversation && created.conversation.id);
+        if (!conversationId) throw new Error("No conversation id returned");
+        log("Created conversation " + conversationId);
+
+        log("Fetching conversation to locate participantId...");
+        var convo = await api("/api/v2/conversations/" + conversationId);
+        var participants = (convo && convo.participants) || [];
+        var participantId = participants && participants[1] && participants[1].id;
+        if (!participantId) throw new Error("Unable to find participant at index 1; check conversation participants");
+        log("Participant (index 1) = " + participantId);
+
+        log("Assigning to selected agent...");
+        await api("/api/v2/conversations/emails/" + conversationId + "/participants/" + participantId + "/replace", {
+          method: "POST",
+          body: JSON.stringify({ userId: userId })
+        });
+        log("Assigned to agent");
+
+        log("Disconnecting conversation...");
+        await api("/api/v2/conversations/emails/" + conversationId, {
+          method: "PATCH",
+          body: JSON.stringify({ state: "disconnected" })
+        });
+        log("Conversation disconnected. You can now create an evaluation.");
+      } catch (e) {
+        setError(e.message || String(e));
+        log("❌ Error: " + (e.message || String(e)));
+      } finally {
+        $("createBtn").disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
