@@ -1,13 +1,16 @@
+
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>External Work Evaluator – Vanilla (Tokyo)</title>
+  <title>External Work Evaluator – VANILLA BUILD LOADED (Tokyo)</title>
   <style>
     :root { --bg:#0b0d10; --card:#11151a; --muted:#9aa4b2; --text:#e6edf3; }
     html, body { height: 100%; background: var(--bg); color: var(--text); }
     body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; }
+    .banner { background:#123; padding:10px 16px; text-align:center; border-bottom:1px solid #2a3b54; }
+    .banner strong { color:#9effb3; }
     .container { max-width: 1000px; margin: 24px auto; padding: 0 16px; }
     .card { background: var(--card); border: 1px solid #1f2630; border-radius: 16px; box-shadow: 0 10px 20px rgba(0,0,0,.35); }
     .header { padding: 20px 20px 0 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -33,6 +36,9 @@
   </style>
 </head>
 <body>
+  <div class="banner">
+    <strong>VANILLA BUILD LOADED</strong> — No React/No Babel/CDNs.
+  </div>
   <div class="container">
     <div class="card">
       <div class="header">
@@ -136,20 +142,13 @@
       t.value = (t.value ? t.value + "\\n" : "") + stamp + " • " + line;
       t.scrollTop = t.scrollHeight;
     }
-    function setError(msg) {
-      $("errors").textContent = msg;
-    }
-    function clearError() {
-      $("errors").textContent = "";
-    }
+    function setError(msg) { $("errors").textContent = msg; }
+    function clearError() { $("errors").textContent = ""; }
 
     function buildAuthUrl() {
       var base = "https://login." + REGION_HOST + "/oauth/authorize";
       var params = new URLSearchParams({
-        client_id: CLIENT_ID,
-        response_type: "token",
-        redirect_uri: REDIRECT_URI,
-        state: OAUTH_STATE
+        client_id: CLIENT_ID, response_type: "token", redirect_uri: REDIRECT_URI, state: OAUTH_STATE
       });
       return base + "?" + params.toString();
     }
@@ -169,6 +168,7 @@
       $("signoutBtn").style.display = signedIn ? "inline-block" : "none";
       $("loadQueuesBtn").disabled = !signedIn;
       $("queueSelect").disabled = !signedIn;
+      // DO NOT force memberSelect disabled here; loadMembers will toggle it
       $("createBtn").disabled = !signedIn || !$("queueSelect").value || !$("memberSelect").value;
       $("token").value = token;
       $("queueCount").textContent = "";
@@ -182,6 +182,7 @@
     $("signoutBtn").addEventListener("click", function() {
       token = ""; expiresIn = null;
       $("memberSelect").innerHTML = '<option value="" disabled selected>Select a queue first</option>';
+      $("memberSelect").disabled = true;
       $("queueSelect").innerHTML = '<option value="" disabled selected>Sign in first</option>';
       $("noMembers").style.display = "none";
       updateSigninState();
@@ -191,17 +192,18 @@
     window.addEventListener("error", function(e){ setError((e && e.message) ? e.message : "Script error"); });
     window.addEventListener("unhandledrejection", function(e){ setError("Promise rejection: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
-    // Initialize from hash (after redirect)
     (function init() {
       var th = readTokenFromHash();
-      if (th) {
-        token = th.access_token; expiresIn = th.expires_in;
+      if (th) { token = th.access_token; expiresIn = th.expires_in; }
+      updateSigninState();
+
+      $("region").addEventListener("input", function(){});
+      $("queueSelect").addEventListener("change", function(){
+        $("memberSelect").disabled = true; // disable while loading
+        $("memberSelect").innerHTML = '<option value="" disabled selected>Loading members…</option>';
+        loadMembers(this.value);
         updateSigninState();
-      } else {
-        updateSigninState();
-      }
-      $("region").addEventListener("input", function(){ /* changes baseUrl on the fly */ });
-      $("queueSelect").addEventListener("change", function(){ loadMembers(this.value); updateSigninState(); });
+      });
       $("memberSelect").addEventListener("change", function(){ updateSigninState(); });
       $("loadQueuesBtn").addEventListener("click", function(){ loadQueues(); });
       $("createBtn").addEventListener("click", function(){ createExternalWork(); });
@@ -212,10 +214,7 @@
       var res = await fetch(baseUrl() + path, Object.assign({}, init || {}, {
         headers: Object.assign({ "Authorization": "Bearer " + token, "Content-Type": "application/json" }, (init && init.headers) ? init.headers : {})
       }));
-      if (!res.ok) {
-        var text = await res.text();
-        throw new Error(res.status + " " + res.statusText + ": " + text);
-      }
+      if (!res.ok) { var text = await res.text(); throw new Error(res.status + " " + res.statusText + ": " + text); }
       return res.json();
     }
 
@@ -223,14 +222,13 @@
       clearError();
       $("queueSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
       $("memberSelect").innerHTML = '<option value="" disabled selected>Select a queue first</option>';
+      $("memberSelect").disabled = true;
       $("noMembers").style.display = "none";
       try {
         var items = []; var page = 1; var pageSize = 100; var data;
         do {
           data = await api("/api/v2/routing/queues?pageSize=" + pageSize + "&pageNumber=" + page);
-          if (data && Array.isArray(data.entities)) {
-            for (var i=0;i<data.entities.length;i++){ var q=data.entities[i]; items.push({ id:q.id, name:q.name }); }
-          }
+          if (data && Array.isArray(data.entities)) { for (var i=0;i<data.entities.length;i++){ var q=data.entities[i]; items.push({ id:q.id, name:q.name }); } }
           page++;
         } while (data && data.pageCount && page <= data.pageCount);
         items.sort(function(a,b){ return a.name.localeCompare(b.name); });
@@ -249,6 +247,7 @@
     async function loadMembers(queueId) {
       clearError();
       $("memberSelect").innerHTML = '<option value="" disabled selected>Loading members…</option>';
+      $("memberSelect").disabled = true; // lock while loading
       $("noMembers").style.display = "none";
       try {
         var out = []; var page = 1; var pageSize = 100; var data;
@@ -266,8 +265,10 @@
           page++;
         } while (data && data.pageCount && page <= data.pageCount);
         out.sort(function(a,b){ return a.name.localeCompare(b.name); });
+
         if (!out.length) {
           $("memberSelect").innerHTML = '<option value="" disabled selected>No members</option>';
+          $("memberSelect").disabled = true; // keep disabled
           $("noMembers").style.display = "block";
         } else {
           var opts = ['<option value="" disabled selected>Choose a member</option>'];
@@ -276,6 +277,7 @@
             opts.push('<option value="'+out[j].id+'">'+label+'</option>');
           }
           $("memberSelect").innerHTML = opts.join("");
+          $("memberSelect").disabled = false; // <-- ENABLE after loading successfully
           $("noMembers").style.display = "none";
         }
         log("Loaded " + out.length + " members for queue");
@@ -284,6 +286,7 @@
         setError(e.message || String(e));
         log("Failed to load members: " + (e.message || String(e)));
         $("memberSelect").innerHTML = '<option value="" disabled selected>Error loading members</option>';
+        $("memberSelect").disabled = true;
       }
     }
 
@@ -304,12 +307,7 @@
         if (externalRef) attributes["External Reference"] = externalRef;
 
         var createBody = {
-          queueId: queueId,
-          provider: "QualityForm",
-          priority: 0,
-          direction: "INBOUND",
-          fromName: fromName,
-          attributes: attributes
+          queueId: queueId, provider: "QualityForm", priority: 0, direction: "INBOUND", fromName: fromName, attributes: attributes
         };
 
         var created = await api("/api/v2/conversations/emails", { method: "POST", body: JSON.stringify(createBody) });
@@ -326,15 +324,13 @@
 
         log("Assigning to selected agent...");
         await api("/api/v2/conversations/emails/" + conversationId + "/participants/" + participantId + "/replace", {
-          method: "POST",
-          body: JSON.stringify({ userId: userId })
+          method: "POST", body: JSON.stringify({ userId: userId })
         });
         log("Assigned to agent");
 
         log("Disconnecting conversation...");
         await api("/api/v2/conversations/emails/" + conversationId, {
-          method: "PATCH",
-          body: JSON.stringify({ state: "disconnected" })
+          method: "PATCH", body: JSON.stringify({ state: "disconnected" })
         });
         log("Conversation disconnected. You can now create an evaluation.");
       } catch (e) {
