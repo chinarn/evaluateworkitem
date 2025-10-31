@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>External Work Evaluator (Standalone)</title>
+  <style>
+    :root { --bg:#0b0d10; --card:#11151a; --muted:#9aa4b2; --text:#e6edf3; --accent:#6aa6ff; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; }
+    .container { max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+    .card { background: var(--card); border: 1px solid #1f2630; border-radius: 16px; box-shadow: 0 10px 20px rgba(0,0,0,.35); }
+    .card + .card { margin-top: 20px; }
+    .header { padding: 20px 20px 0 20px; }
+    .title { font-weight: 700; font-size: 20px; letter-spacing: .2px; }
+    .content { padding: 20px; }
+    .grid { display:grid; gap:16px; }
+    .grid-2 { grid-template-columns: 1fr; }
+    @media (min-width: 768px) { .grid-2 { grid-template-columns: 1fr 1fr; } .grid-3 { grid-template-columns: 1fr 2fr 2fr; } }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    input, select, textarea, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #263041; background: #0e1217; color: var(--text); padding: 10px 12px; }
+    textarea { resize: vertical; min-height: 120px; }
+    button { background: #1a2330; cursor: pointer; }
+    button:hover { background:#1e2a3a; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .row > * { flex: 1; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: #0a0d11; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React via CDN + Babel for JSX -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+
+    function ExternalWorkEvaluatorStandalone() {
+      const [region, setRegion] = useState("mypurecloud.com");
+      const [token, setToken] = useState("");
+
+      const [queues, setQueues] = useState([]);
+      const [loadingQueues, setLoadingQueues] = useState(false);
+      const [selectedQueueId, setSelectedQueueId] = useState("");
+
+      const [members, setMembers] = useState([]);
+      const [loadingMembers, setLoadingMembers] = useState(false);
+      const [selectedUserId, setSelectedUserId] = useState("");
+
+      const [fromName, setFromName] = useState("External Work");
+      const [externalRef, setExternalRef] = useState("");
+      const [attributesJson, setAttributesJson] = useState('{\n  "External Reference": ""\n}');
+
+      const [running, setRunning] = useState(false);
+      const [log, setLog] = useState("");
+
+      const baseUrl = useMemo(() => \`https://api.\${region}\`, [region]);
+
+      function appendLog(line) {
+        const stamp = new Date().toLocaleTimeString();
+        setLog(prev => \`\${prev}\${prev ? "\\n" : ""}\${stamp} • \${line}\`);
+      }
+
+      async function api(path, init) {
+        if (!token) throw new Error("Missing OAuth token");
+        const res = await fetch(\`\${baseUrl}\${path}\`, {
+          ...init,
+          headers: {
+            "Authorization": \`Bearer \${token}\`,
+            "Content-Type": "application/json",
+            ...(init && init.headers ? init.headers : {}),
+          },
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(\`\${res.status} \${res.statusText}: \${text}\`);
+        }
+        return res.json();
+      }
+
+      async function loadQueues() {
+        setLoadingQueues(true);
+        setQueues([]);
+        try {
+          const items = [];
+          let page = 1;
+          const pageSize = 100;
+          while (true) {
+            const data = await api(\`/api/v2/routing/queues?pageSize=\${pageSize}&pageNumber=\${page}\`);
+            if (Array.isArray(data?.entities)) {
+              for (const q of data.entities) items.push({ id: q.id, name: q.name });
+            }
+            const pageCount = data?.pageCount ?? 1;
+            if (page >= pageCount) break;
+            page += 1;
+          }
+          items.sort((a, b) => a.name.localeCompare(b.name));
+          setQueues(items);
+          appendLog(\`Loaded \${items.length} queues\`);
+        } catch (e) {
+          appendLog(\`Failed to load queues: \${e.message}\`);
+        } finally {
+          setLoadingQueues(false);
+        }
+      }
+
+      useEffect(() => {
+        async function run() {
+          if (!selectedQueueId) return;
+          setLoadingMembers(true);
+          setMembers([]);
+          try {
+            const out = [];
+            let page = 1;
+            const pageSize = 100;
+            while (true) {
+              const data = await api(\`/api/v2/routing/queues/\${selectedQueueId}/members?pageSize=\${pageSize}&pageNumber=\${page}\`);
+              if (Array.isArray(data?.entities)) {
+                for (const m of data.entities) {
+                  const name = m?.name ?? m?.user?.name ?? "(unknown)";
+                  const email = m?.user?.email;
+                  const id = m?.user?.id ?? m?.id;
+                  if (id) out.push({ id, name, email });
+                }
+              }
+              const pageCount = data?.pageCount ?? 1;
+              if (page >= pageCount) break;
+              page += 1;
+            }
+            out.sort((a, b) => a.name.localeCompare(b.name));
+            setMembers(out);
+            appendLog(\`Loaded \${out.length} members for queue\`);
+          } catch (e) {
+            appendLog(\`Failed to load members: \${e.message}\`);
+          } finally {
+            setLoadingMembers(false);
+          }
+        }
+        run();
+      }, [selectedQueueId]);
+
+      async function createExternalWork() {
+        if (!selectedQueueId) return appendLog("Please select a queue");
+        if (!selectedUserId) return appendLog("Please select a member (agent)");
+        setRunning(true);
+        setLog("");
+
+        try {
+          appendLog("Creating proxy email interaction...");
+          let attributes = {};
+          try {
+            attributes = JSON.parse(attributesJson || "{}");
+          } catch (e) {
+            appendLog("Attributes JSON is invalid; defaulting to empty object");
+          }
+          if (externalRef) attributes["External Reference"] = externalRef;
+
+          const createBody = {
+            queueId: selectedQueueId,
+            provider: "QualityForm",
+            priority: 0,
+            direction: "INBOUND",
+            fromName: fromName || "External Work",
+            attributes,
+          };
+
+          const created = await api("/api/v2/conversations/emails", {
+            method: "POST",
+            body: JSON.stringify(createBody),
+          });
+          const conversationId = created?.id || created?.conversationId || created?.conversation?.id;
+          if (!conversationId) throw new Error("No conversation id returned");
+          appendLog(\`Created conversation \${conversationId}\`);
+
+          appendLog("Fetching conversation to locate participantId...");
+          const convo = await api(\`/api/v2/conversations/\${conversationId}\`);
+          const participants = convo?.participants || [];
+          const participantId = participants?.[1]?.id;
+          if (!participantId) throw new Error("Unable to find participant at index 1; check conversation participants");
+          appendLog(\`Participant (index 1) = \${participantId}\`);
+
+          appendLog("Assigning to selected agent...");
+          await api(\`/api/v2/conversations/emails/\${conversationId}/participants/\${participantId}/replace\`, {
+            method: "POST",
+            body: JSON.stringify({ userId: selectedUserId }),
+          });
+          appendLog("Assigned to agent");
+
+          appendLog("Disconnecting conversation...");
+          await api(\`/api/v2/conversations/emails/\${conversationId}\`, {
+            method: "PATCH",
+            body: JSON.stringify({ state: "disconnected" }),
+          });
+          appendLog("Conversation disconnected. You can now create an evaluation.");
+        } catch (e) {
+          appendLog("❌ Error: " + e.message);
+        } finally {
+          setRunning(false);
+        }
+      }
+
+      return (
+        <div className="container">
+          <div className="card">
+            <div className="header"><div className="title">External Work Evaluator (Standalone)</div></div>
+            <div className="content">
+              <div className="grid grid-3">
+                <div>
+                  <label htmlFor="region">Region</label>
+                  <input id="region" placeholder="mypurecloud.com" value={region} onChange={(e)=>setRegion(e.target.value)} />
+                  <div className="muted">Examples: mypurecloud.com, mypurecloud.ie, usw2.pure.cloud</div>
+                </div>
+                <div className="grid-2" style={{gridColumn: "span 2"}}>
+                  <div>
+                    <label htmlFor="token">OAuth Token</label>
+                    <input id="token" type="password" placeholder="Paste a short-lived Bearer token" value={token} onChange={(e)=>setToken(e.target.value)} />
+                    <div className="muted">For production, use a backend to proxy these calls.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="row" style={{marginTop: 12}}>
+                <button onClick={loadQueues} disabled={!token || loadingQueues}>{loadingQueues ? "Loading..." : "Load Queues"}</button>
+                <div className="muted">{queues.length ? \`\${queues.length} queues loaded\` : ""}</div>
+              </div>
+
+              <div className="grid grid-2" style={{marginTop: 16}}>
+                <div>
+                  <label>1) Select a Queue</label>
+                  <select value={selectedQueueId} onChange={(e)=>setSelectedQueueId(e.target.value)}>
+                    <option value="" disabled>Choose a queue</option>
+                    {queues.map(q => (<option key={q.id} value={q.id}>{q.name}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label>2) Select a Member (Agent)</label>
+                  <select value={selectedUserId} onChange={(e)=>setSelectedUserId(e.target.value)} disabled={!selectedQueueId || loadingMembers}>
+                    <option value="" disabled>{loadingMembers ? "Loading members..." : (!selectedQueueId ? "Select a queue first" : "Choose a member")}</option>
+                    {members.map(m => (<option key={m.id} value={m.id}>{m.name}{m.email ? \` (\${m.email})\` : ""}</option>))}
+                  </select>
+                  {selectedQueueId && !loadingMembers && !members.length && (<div className="muted">This queue appears to have no members.</div>)}
+                </div>
+              </div>
+
+              <div className="grid grid-2" style={{marginTop: 16}}>
+                <div>
+                  <label htmlFor="fromname">3) From Name (optional)</label>
+                  <input id="fromname" value={fromName} onChange={(e)=>setFromName(e.target.value)} placeholder="External Work" />
+                  <div className="muted">Shown as the email remote name; searchable in Interactions.</div>
+                </div>
+                <div>
+                  <label htmlFor="extref">External Reference (ID or URL)</label>
+                  <input id="extref" value={externalRef} onChange={(e)=>setExternalRef(e.target.value)} placeholder="e.g., https://ticketing.example.com/TKT-123" />
+                  <div className="muted">Links will be clickable in the Interactions UI.</div>
+                </div>
+              </div>
+
+              <div style={{marginTop: 16}}>
+                <label htmlFor="attrs">Custom Attributes (JSON)</label>
+                <textarea id="attrs" value={attributesJson} onChange={(e)=>setAttributesJson(e.target.value)} className="log"></textarea>
+                <div className="muted">Sent as the <code>attributes</code> object when creating the email. The External Reference key will be added/overridden.</div>
+              </div>
+
+              <div className="row" style={{marginTop: 16}}>
+                <button onClick={createExternalWork} disabled={running || !selectedQueueId || !selectedUserId}>{running ? "Working..." : "Create & Assign External Work"}</button>
+                <div className="muted">Creates, assigns, then disconnects the interaction.</div>
+              </div>
+
+              <div style={{marginTop: 16}}>
+                <label>Run Log</label>
+                <textarea readOnly rows="10" value={log} className="log"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="header"><div className="title">Notes</div></div>
+            <div className="content">
+              <ul>
+                <li>Queues: <code>GET /api/v2/routing/queues</code></li>
+                <li>Members: <code>GET /api/v2/routing/queues/{'{queueId}'}/members</code></li>
+                <li>Create: <code>POST /api/v2/conversations/emails</code></li>
+                <li>Read participants: <code>GET /api/v2/conversations/{'{conversationId}'}</code></li>
+                <li>Assign: <code>POST /api/v2/conversations/emails/{'{conversationId}'}/participants/{'{participantId}'}/replace</code></li>
+                <li>Disconnect: <code>PATCH /api/v2/conversations/emails/{'{conversationId}'}</code> → <code>{'{ "state": "disconnected" }'}</code></li>
+                <li>Ensure the queue's ACW is configured appropriately (Optional) if you're not applying wrap-up.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<ExternalWorkEvaluatorStandalone />);
+  </script>
+</body>
+</html>
